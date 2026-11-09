@@ -12,6 +12,8 @@ The code releases the $40 to the conductor's PayPal.
 
 **Demo video (1:37):** https://youtu.be/o3fDZUO9K0M · also in the repo: [docs/finders-demo.mp4](docs/finders-demo.mp4)
 
+**Live demo (PayPal sandbox, no real money):** https://finders-hrmx.onrender.com · report or look for an item on the home page; the operations page needs the operator key given to the judges.
+
 > PayPal **sandbox** only: no real money moves. Sample reports on the board are marked "sample". The demo item
 > photos in `demo/photos/` were generated with Gemini's image model.
 
