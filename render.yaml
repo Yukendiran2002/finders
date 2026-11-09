@@ -16,5 +16,7 @@ services:
         sync: false
       - key: GEMINI_API_KEY
         sync: false
+      - key: GEMINI_DAILY_LIMIT
+        value: "300"
       - key: FINDERS_OPERATOR_KEY
         generateValue: true

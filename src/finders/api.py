@@ -89,6 +89,12 @@ def _ts(value: str) -> float:
         return dt.timestamp()
 
 
+def _ai_budget(service: Finders) -> bool:
+    """Money questions share the daily model budget with matching (CappedBrain)."""
+    ok = getattr(service.brain, "_ok", None)
+    return ok() if ok else True
+
+
 def create_app(
     service: Finders,
     *,
@@ -267,7 +273,7 @@ def create_app(
 
     @api.post("/api/owner/ask")
     async def owner_ask(body: AskIn, cid: str = Depends(owner)) -> dict[str, Any]:
-        if records is None or not gemini_key:
+        if records is None or not gemini_key or not _ai_budget(service):
             raise HTTPException(503, "questions need the PayPal Agent Toolkit reader and a Gemini key")
         try:
             await service.refresh_payouts(cid)
@@ -330,7 +336,7 @@ def create_app(
 
     @api.post("/api/ops/cases/{case_id}/ask", dependencies=[Depends(operator)])
     async def ops_ask(case_id: str, body: AskIn) -> dict[str, Any]:
-        if records is None or not gemini_key:
+        if records is None or not gemini_key or not _ai_budget(service):
             raise HTTPException(503, "questions need the PayPal Agent Toolkit reader and a Gemini key")
         try:
             await service.refresh_payouts(case_id)
@@ -372,7 +378,7 @@ def create_app(
 def main() -> None:  # pragma: no cover - process entry point
     import uvicorn
 
-    from finders.ai import GeminiBrain, RuleBrain
+    from finders.ai import CappedBrain, GeminiBrain, RuleBrain
     from finders.db import Database
     from finders.paypal import PayPal
     from finders.records import ToolkitReader
@@ -380,7 +386,9 @@ def main() -> None:  # pragma: no cover - process entry point
 
     env = load_env()
     key = gemini_key(env)
-    brain = GeminiBrain(key) if key else RuleBrain()
+    brain = (
+        CappedBrain(GeminiBrain(key), RuleBrain(), int(env.get("GEMINI_DAILY_LIMIT", "400"))) if key else RuleBrain()
+    )
     service = Finders(
         Database(env.get("FINDERS_DB", "finders.db")),
         PayPal(env["PAYPAL_CLIENT_ID"], env["PAYPAL_CLIENT_SECRET"]),

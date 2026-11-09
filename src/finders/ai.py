@@ -245,3 +245,44 @@ class RuleBrain:
         if hit >= 1:
             return Verdict(verdict="yes", reason="The answer names a specific detail that matches.")
         return Verdict(verdict="no" if a else "unsure", reason="The answer does not match the specific detail.")
+
+
+class CappedBrain:
+    """Uses the model until a daily call budget is spent, then the keyword rules (so a public demo cannot run up
+    model costs). The budget resets at 00:00 UTC."""
+
+    name = "Gemini (daily limit)"
+
+    def __init__(self, model: Brain, fallback: Brain, daily_limit: int) -> None:
+        self.model, self.fallback, self.limit = model, fallback, daily_limit
+        self._day, self._used = "", 0
+
+    def _ok(self, peek: bool = False) -> bool:
+        import time as _t
+
+        day = _t.strftime("%Y-%m-%d", _t.gmtime())
+        if day != self._day:
+            self._day, self._used = day, 0
+        if self._used >= self.limit:
+            return False
+        if not peek:
+            self._used += 1
+        return True
+
+    def _pick(self) -> Brain:
+        return self.model if self._ok() else self.fallback
+
+    async def describe(self, text: str, photos: list[Photo]) -> Attributes:
+        return await self._pick().describe(text, photos)
+
+    async def rank(self, found: ItemView, lost: list[ItemView]) -> Ranking:
+        return await self._pick().rank(found, lost)
+
+    async def finder_question(self, lost: ItemView) -> Question:
+        return await self._pick().finder_question(lost)
+
+    async def owner_question(self, found: ItemView, lost: ItemView, avoid: str = "") -> Question:
+        return await self._pick().owner_question(found, lost, avoid)
+
+    async def judge(self, question: str, expected: str, answer: str) -> Verdict:
+        return await self._pick().judge(question, expected, answer)
