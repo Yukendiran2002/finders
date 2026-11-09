@@ -51,6 +51,10 @@ Refunds cover every outcome where the finder is not paid.
 - **A person reviews the payout first** when a fraud rule fires: a photo reused from another report, or more than
   3 verified claims by one finder in 24 hours.
 - **A payout counts as "paid" only when PayPal's item status is SUCCESS.** UNCLAIMED and PENDING stay visible.
+- **Pending is not paid.** An owner payment that PayPal reports as PENDING does not put the reward on offer until it
+  completes, and a declined one closes the case. A PENDING refund is shown as pending until it completes.
+- **Lost responses recover the original.** If the first payout attempt's response was lost, PayPal's
+  duplicate-batch error links to the original batch, which is then tracked. Without that link, a person reviews it.
 - **Wrong handover codes lock after 5 tries.** The owner can issue a new one.
 - **Sandbox only.** The REST client and the toolkit reader refuse any other host.
 
@@ -99,7 +103,7 @@ Try it with the demo photos:
 
 Other commands:
 
-- `uv run pytest`: run the tests (31, against a local fake PayPal and a scripted AI)
+- `uv run pytest`: run the tests (34, against a local fake PayPal and a scripted AI)
 - `uv run python scripts/live_case.py /tmp/live.db demo/photos/keys_found.jpg`: run a whole case against the real
   sandbox and Gemini from the command line
 

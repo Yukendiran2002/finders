@@ -50,7 +50,13 @@ function line(e: FeedEvent): { tone: 'good' | 'warn' | 'bad' | 'info' | 'brand';
     case 'handed_over':
       return { tone: 'good', text: `Handed over · $${s(d.reward)} reward released` }
     case 'payout_submitted':
-      return { tone: 'brand', text: `PayPal Payout $${s(d.amount)} to ${s(d.receiver)}`, sub: `batch ${s(d.payout_batch_id)}` }
+      return { tone: 'brand', text: `PayPal Payout of $${s(d.amount)} sent to ${s(d.receiver)}`, sub: `batch ${s(d.payout_batch_id)} · counted as received at item SUCCESS` }
+    case 'reward_payment_pending':
+      return { tone: 'warn', text: 'Owner payment PENDING at PayPal: reward not live yet' }
+    case 'reward_payment_failed':
+      return { tone: 'bad', text: `Owner payment ${s(d.status)}: case closed` }
+    case 'payout_needs_review':
+      return { tone: 'bad', text: 'A payout needs a person to check it in PayPal' }
     case 'payout_checked':
       return { tone: d.state === 'DONE' ? 'good' : 'warn', text: `Payout item ${s(d.item_status)} → ${s(d.state)}` }
     case 'payout_uncertain':
@@ -120,24 +126,16 @@ export function Ops() {
   useEffect(() => {
     load()
     const t = setInterval(load, 4000)
-    const es = ops.events()
     const seen = new Set<number>()
-    es.onmessage = () => undefined
-    const handler = (ev: MessageEvent) => {
-      const e = JSON.parse(ev.data) as FeedEvent
+    const stop = ops.events((data) => {
+      const e = JSON.parse(data) as FeedEvent
       if (seen.has(e.seq)) return
       seen.add(e.seq)
       setFeed((xs) => [...xs.slice(-300), e])
       load()
-    }
-    const kinds = [
-      'lost_reported', 'reward_paid', 'found_reported', 'match_ranked', 'match_none', 'match_proposed', 'finder_asked', 'finder_checked', 'owner_asked',
-      'owner_checked', 'match_reviewed', 'handover_code_issued', 'handover_code_wrong', 'handed_over', 'payout_submitted', 'payout_checked', 'payout_uncertain',
-      'refund_uncertain', 'payout_already_submitted', 'payout_refused', 'refund_refused', 'refunded', 'case_closed', 'audit_completed', 'money_question',
-    ]
-    kinds.forEach((k) => es.addEventListener(k, handler as EventListener))
+    })
     return () => {
-      es.close()
+      stop()
       clearInterval(t)
     }
   }, [load])

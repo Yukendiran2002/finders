@@ -20,7 +20,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
-from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Query, Request, UploadFile
+from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -106,9 +106,11 @@ def create_app(
             await asyncio.sleep(housekeeping_every)
             try:
                 async with lock:
+                    await service.check_pending_payments()
                     await service.expire_due()
                     await service.settle()
                     await service.refresh_payouts()
+                    await service.refresh_refunds()
             except Exception as exc:  # noqa: BLE001 - recorded; the next pass retries
                 service.db.event("housekeeping_failed", None, error=f"{type(exc).__name__}: {exc}"[:300])
 
@@ -123,10 +125,10 @@ def create_app(
 
     api = FastAPI(title="Finders", version="0.1.0", lifespan=lifespan)
 
-    def operator(x_operator_key: str = Header(default=""), key: str = Query(default="")) -> None:
+    def operator(x_operator_key: str = Header(default="")) -> None:
         if operator_key is None:
             return
-        given = x_operator_key or key
+        given = x_operator_key  # header only: keys never appear in URLs or access logs
         if not given or not hmac.compare_digest(given.encode(), operator_key.encode()):
             raise HTTPException(401, "operator key required")
 
@@ -305,9 +307,11 @@ def create_app(
     @api.post("/api/ops/housekeeping", dependencies=[Depends(operator)])
     async def run_housekeeping() -> dict[str, Any]:
         async def go() -> dict[str, Any]:
+            await service.check_pending_payments()
             expired = await service.expire_due()
             await service.settle()
             await service.refresh_payouts()
+            await service.refresh_refunds()
             return {"expired": expired}
 
         return await guarded(go())

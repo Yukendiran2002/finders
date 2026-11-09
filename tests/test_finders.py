@@ -264,6 +264,7 @@ def test_lost_payout_response_is_never_paid_twice(tmp_path):
     run(app.settle())
     s = app.db.one("SELECT * FROM settlements WHERE kind='payout'")
     assert s["state"] == "SUBMITTED" and len(env.fake.payouts) == 1
+    assert s["paypal_id"] == next(iter(env.fake.payouts))  # the original batch, recovered from PayPal's error link
     assert app.case_money(cid)["paid_out"] == "40.00"
 
 
@@ -380,3 +381,40 @@ def test_owner_sees_the_find_only_after_the_finder_proved_it(tmp_path):
     run(env.app.finder_answer(mid, fid, "Asha"))
     view = env.app.owner_view(cid)["matches"][0]
     assert view["photo_id"] and view["finder_name"] == "Ravi" and view["owner_question"]
+
+
+def test_pending_owner_payment_does_not_open_the_case(tmp_path):
+    env = Env(tmp_path)
+    env.fake.capture_status = "PENDING"
+    cid, _ = env.lost(pay=False)
+    out = run(env.app.pay_with_card(cid))
+    assert out["pending"] and env.app._case(cid)["status"] == "PAYMENT_PENDING"
+    _, _, matches = env.found()
+    assert matches == []  # a reward that is not completed is not on offer
+    for c in env.fake.captures.values():
+        c["status"] = "COMPLETED"
+    run(env.app.check_pending_payments())
+    assert env.app._case(cid)["status"] == "OPEN" and env.app.case_money(cid)["paid"] == "41.00"
+
+
+def test_declined_owner_payment_closes_the_case(tmp_path):
+    env = Env(tmp_path)
+    env.fake.capture_status = "PENDING"
+    cid, _ = env.lost(pay=False)
+    run(env.app.pay_with_card(cid))
+    for c in env.fake.captures.values():
+        c["status"] = "DECLINED"
+    run(env.app.check_pending_payments())
+    assert env.app._case(cid)["status"] == "PAYMENT_FAILED"
+
+
+def test_pending_refund_is_not_counted_until_completed(tmp_path):
+    env = Env(tmp_path)
+    cid, _ = env.lost()
+    env.fake.refund_status = "PENDING"
+    m = run(env.app.cancel(cid))
+    assert m["refunded"] == "0.00" and m["settlements"][0]["state"] == "PENDING"
+    for r in env.fake.refunds.values():
+        r["status"] = "COMPLETED"
+    run(env.app.refresh_refunds())
+    assert env.app.case_money(cid)["refunded"] == "40.00"

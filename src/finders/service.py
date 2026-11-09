@@ -23,7 +23,7 @@ from typing import Any
 from finders.ai import Brain, ItemView, Photo
 from finders.db import Database, new_id
 from finders.money import fmt, parse_user_amount, show
-from finders.paypal import PayPal, PayPalDefinite, PayPalUncertain, captures_of
+from finders.paypal import PayPal, PayPalDefinite, PayPalUncertain, captures_of, payout_batch_from_links
 
 FEE_CENTS = 100
 EXPIRY_S = 14 * 24 * 3600
@@ -160,17 +160,28 @@ class Finders:
     def _record_payment(self, case_id: str, order: dict[str, Any]) -> dict[str, Any]:
         case = self._case(case_id)
         caps = [c for c in captures_of(order) if c.get("status") in ("COMPLETED", "PENDING")]
-        if order.get("status") != "COMPLETED" or not caps:
+        if not caps:
             raise RuntimeError(f"PayPal did not take the payment (order status {order.get('status')})")
         cap = caps[0]
         due = case["reward_cents"] + case["fee_cents"]
         if cap["amount"]["value"] != fmt(due) or cap["amount"]["currency_code"] != "USD":
             raise RuntimeError("captured amount differs from reward plus fee")
         now = self.clock()
+        if cap["status"] == "PENDING":
+            # PayPal has the payment but has not completed it: the reward is not live and nobody can be paid from it
+            with self.db.tx() as conn:
+                cur = conn.execute(
+                    "UPDATE lost SET status='PAYMENT_PENDING', order_id=?, capture_id=?, updated_at=? "
+                    "WHERE id=? AND status='UNPAID'",
+                    (order["id"], cap["id"], now, case_id),
+                )
+                if cur.rowcount:
+                    self.db.event("reward_payment_pending", case_id, conn=conn, capture_id=cap["id"])
+            return {"order_id": order["id"], "capture_id": cap["id"], "amount": fmt(due), "pending": True}
         with self.db.tx() as conn:
             cur = conn.execute(
                 "UPDATE lost SET status='OPEN', order_id=?, capture_id=?, paid_cents=?, expires_at=?, updated_at=? "
-                "WHERE id=? AND status='UNPAID'",
+                "WHERE id=? AND status IN ('UNPAID','PAYMENT_PENDING')",
                 (order["id"], cap["id"], due, now + EXPIRY_S, now, case_id),
             )
             if cur.rowcount:
@@ -474,6 +485,24 @@ class Finders:
         await self.settle(case_id)
         return self.case_money(case_id)
 
+    async def check_pending_payments(self) -> None:
+        """Owner payments PayPal reported as PENDING: open the case once COMPLETED, close it if declined."""
+        for c in self.db.all("SELECT * FROM lost WHERE status='PAYMENT_PENDING' AND capture_id IS NOT NULL"):
+            try:
+                cap = await self.paypal.get_capture(c["capture_id"])
+            except (PayPalUncertain, PayPalDefinite):
+                continue
+            if cap.get("status") == "COMPLETED":
+                order = {"id": c["order_id"], "status": "COMPLETED",
+                         "purchase_units": [{"payments": {"captures": [cap]}}]}  # fmt: skip
+                self._record_payment(c["id"], order)
+            elif cap.get("status") in ("DECLINED", "FAILED"):
+                with self.db.tx() as conn:
+                    conn.execute(
+                        "UPDATE lost SET status='PAYMENT_FAILED', updated_at=? WHERE id=?", (self.clock(), c["id"])
+                    )
+                    self.db.event("reward_payment_failed", c["id"], conn=conn, status=cap.get("status"))
+
     async def expire_due(self) -> list[str]:
         due = self.db.all(
             "SELECT id FROM lost WHERE status IN ('OPEN','MATCHED') AND expires_at IS NOT NULL AND expires_at < ?",
@@ -526,9 +555,17 @@ class Finders:
             return
         except PayPalDefinite as exc:
             if any("already exists" in m for m in (exc.issues + [str(exc)])):
-                self._set(s["id"], state="SUBMITTED", error="confirmed by PayPal duplicate check")
-                self._money(s, "paid_out_cents")
-                self.db.event("payout_already_submitted", s["lost_id"], settlement_id=s["id"])
+                # our earlier attempt reached PayPal: never pay twice; PayPal's error links the original batch
+                batch = payout_batch_from_links(exc.links)
+                if batch:
+                    self._set(s["id"], state="SUBMITTED", paypal_id=batch, error=None)
+                    self._money(s, "paid_out_cents")
+                    self.db.event(
+                        "payout_already_submitted", s["lost_id"], settlement_id=s["id"], payout_batch_id=batch
+                    )
+                else:
+                    self._set(s["id"], state="REVIEW", error="duplicate batch but original batch id not returned")
+                    self.db.event("payout_needs_review", s["lost_id"], settlement_id=s["id"])
                 return
             self._set(s["id"], state="FAILED", error=f"{exc.name} {exc.issues}")
             self.db.event("payout_refused", s["lost_id"], settlement_id=s["id"], name=exc.name, issues=exc.issues)
@@ -559,11 +596,51 @@ class Finders:
             self._set(s["id"], state="FAILED", error=f"{exc.name} {exc.issues}")
             self.db.event("refund_refused", s["lost_id"], settlement_id=s["id"], name=exc.name, issues=exc.issues)
             return
-        self._set(s["id"], state="DONE", paypal_id=res.get("id"), item_status=res.get("status"), error=None)
-        self._money(s, "refunded_cents")
+        self._record_refund(s, res)
+
+    def _record_refund(self, s: Any, res: dict[str, Any]) -> None:
+        status = res.get("status")
+        if res.get("amount", {}).get("value") != fmt(s["amount_cents"]):
+            self._set(s["id"], state="REVIEW", paypal_id=res.get("id"), error="refund amount differs")
+            return
+        if status == "PENDING":
+            self._set(s["id"], state="PENDING", paypal_id=res.get("id"), item_status=status, error=None)
+            return
+        if status in ("FAILED", "CANCELLED"):
+            self._set(s["id"], state="FAILED", paypal_id=res.get("id"), item_status=status)
+            self.db.event("refund_refused", s["lost_id"], settlement_id=s["id"], name=status, issues=[])
+            return
+        if status != "COMPLETED":
+            self._set(s["id"], state="UNCERTAIN", error=f"unrecognised refund status {status}")
+            return
+        with self.db.tx() as conn:
+            cur = conn.execute(
+                "UPDATE settlements SET state='DONE', paypal_id=?, item_status=?, error=NULL, updated_at=? "
+                "WHERE id=? AND state!='DONE'",
+                (res.get("id"), status, self.clock(), s["id"]),
+            )
+            if not cur.rowcount:
+                return
+            conn.execute(
+                "UPDATE lost SET refunded_cents=refunded_cents+?, updated_at=? WHERE id=?",
+                (s["amount_cents"], self.clock(), s["lost_id"]),
+            )
         self.db.event(
             "refunded", s["lost_id"], settlement_id=s["id"], refund_id=res.get("id"), amount=fmt(s["amount_cents"])
         )
+
+    async def refresh_refunds(self, case_id: str | None = None) -> None:
+        rows = self.db.all(
+            "SELECT * FROM settlements WHERE kind='refund' AND state='PENDING' AND paypal_id IS NOT NULL"
+            + (" AND lost_id=?" if case_id else ""),
+            *([case_id] if case_id else []),
+        )
+        for s in rows:
+            try:
+                res = await self.paypal.get_refund(s["paypal_id"])
+            except (PayPalUncertain, PayPalDefinite):
+                continue
+            self._record_refund(s, res)
 
     async def refresh_payouts(self, case_id: str | None = None) -> None:
         """A batch can succeed while the person's item is still UNCLAIMED or pending: track the item itself."""

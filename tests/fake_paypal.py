@@ -41,6 +41,8 @@ class FakePayPal:
         self.idem: dict[str, tuple[int, dict[str, Any]]] = {}
         self.faults: dict[str, list[str]] = {}
         self.item_status: dict[str, str] = {}
+        self.capture_status = "COMPLETED"  # status of the next order capture
+        self.refund_status = "COMPLETED"  # status of the next refund
         self.transport = httpx.MockTransport(self._handle)
 
     def fault(self, kind: str, *faults: str) -> None:
@@ -63,6 +65,11 @@ class FakePayPal:
             return self._capture_order(p[3], rid)
         if m == "GET" and p[:3] == ["v2", "checkout", "orders"]:
             return httpx.Response(200, json=self._order_view(p[3]))
+        if m == "GET" and p[:3] == ["v2", "payments", "captures"] and len(p) == 4:
+            return httpx.Response(200, json=self.captures[p[3]])
+        if m == "GET" and p[:3] == ["v2", "payments", "refunds"] and len(p) == 4:
+            r = self.refunds[p[3]]
+            return httpx.Response(200, json={k: v for k, v in r.items() if not k.startswith("_")})
         if p[:3] == ["v2", "payments", "captures"] and p[-1] == "refund":
             return self._refund(p[3], body, rid)
         if m == "POST" and path == "/v1/payments/payouts":
@@ -102,7 +109,7 @@ class FakePayPal:
         o = self.orders[oid]
         cap = {
             "id": _id("CAP"),
-            "status": "COMPLETED",
+            "status": self.capture_status,
             "amount": {"currency_code": "USD", "value": o["unit"]["amount"]["value"]},
             "custom_id": o["unit"].get("custom_id"),
         }
@@ -162,7 +169,7 @@ class FakePayPal:
             )
         ref = {
             "id": _id("REF"),
-            "status": "COMPLETED",
+            "status": self.refund_status,
             "amount": {"currency_code": "USD", "value": _v(cents)},
             "custom_id": body.get("custom_id"),
             "_cap": cid,
@@ -182,7 +189,18 @@ class FakePayPal:
                 400,
                 json={
                     "name": "USER_BUSINESS_ERROR",
-                    "details": [{"issue": "Batch with given sender_batch_id already exists"}],
+                    "details": [
+                        {
+                            "issue": "Batch with given sender_batch_id already exists",
+                            "link": [
+                                {
+                                    "href": "https://api.sandbox.paypal.com/v1/payments/payouts/"
+                                    + next(k for k, b in self.payouts.items() if b["sender_batch_id"] == sbid),
+                                    "rel": "self",
+                                }
+                            ],
+                        }
+                    ],
                 },
             )
         f = self._take("payout")

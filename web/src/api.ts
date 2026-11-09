@@ -160,7 +160,33 @@ export const ops = {
   housekeeping: () => send<{ expired: string[] }>('POST', '/api/ops/housekeeping', {}, op()),
   audit: (case_id: string) => send<Audit>('POST', `/api/ops/cases/${case_id}/audit`, {}, op()),
   ask: (case_id: string, question: string) => send<{ answer: string; tools: string[] }>('POST', `/api/ops/cases/${case_id}/ask`, { question }, op()),
-  events: () => new EventSource(`/api/ops/events?key=${encodeURIComponent(opKey.get())}`),
+  /** Server-sent events read with fetch, so the operator key travels in a header, never in the URL. */
+  events: (onData: (data: string) => void) => {
+    const ctl = new AbortController()
+    ;(async () => {
+      try {
+        const r = await fetch('/api/ops/events', { headers: op(), signal: ctl.signal })
+        const reader = r.body!.getReader()
+        const dec = new TextDecoder()
+        let buf = ''
+        for (;;) {
+          const { value, done } = await reader.read()
+          if (done) break
+          buf += dec.decode(value, { stream: true })
+          let i
+          while ((i = buf.indexOf('\n\n')) >= 0) {
+            const block = buf.slice(0, i)
+            buf = buf.slice(i + 2)
+            const data = block.split('\n').filter((l) => l.startsWith('data: ')).map((l) => l.slice(6)).join('\n')
+            if (data) onData(data)
+          }
+        }
+      } catch {
+        /* aborted or disconnected: the 4 s refresh keeps the page current */
+      }
+    })()
+    return () => ctl.abort()
+  },
 }
 
 export const photoUrl = (id: string) => `/api/photos/${id}`
