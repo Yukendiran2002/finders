@@ -29,8 +29,10 @@ SHOTS = {
     "teddy_found": "A small light-brown teddy bear with a red bow, slightly dusty, sitting on an airport waiting-area chair.",
 }
 EDITS = {  # owner's "old photo" of the same item, made from the found photo so it is recognisably the same object
-    "wallet_owner": ("wallet_found", "The same wallet photographed at home on a wooden desk, closed, front side up, "
-                     "daylight from a window."),
+    "wallet_owner": (
+        "wallet_found",
+        ("The same wallet photographed at home on a wooden desk, closed, front side up, daylight from a window."),
+    ),
 }
 
 
