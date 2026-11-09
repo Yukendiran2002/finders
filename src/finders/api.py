@@ -386,11 +386,14 @@ def main() -> None:  # pragma: no cover - process entry point
 
     env = load_env()
     key = gemini_key(env)
+    db_path = env.get("FINDERS_DB", "finders.db")
     brain = (
-        CappedBrain(GeminiBrain(key), RuleBrain(), int(env.get("GEMINI_DAILY_LIMIT", "400"))) if key else RuleBrain()
+        CappedBrain(GeminiBrain(key), RuleBrain(), int(env.get("GEMINI_DAILY_LIMIT", "400")), counter_db=db_path)
+        if key
+        else RuleBrain()
     )
     service = Finders(
-        Database(env.get("FINDERS_DB", "finders.db")),
+        Database(db_path),
         PayPal(env["PAYPAL_CLIENT_ID"], env["PAYPAL_CLIENT_SECRET"]),
         brain,
     )

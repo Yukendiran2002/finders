@@ -418,3 +418,13 @@ def test_pending_refund_is_not_counted_until_completed(tmp_path):
         r["status"] = "COMPLETED"
     run(env.app.refresh_refunds())
     assert env.app.case_money(cid)["refunded"] == "40.00"
+
+
+def test_the_daily_ai_limit_survives_a_restart(tmp_path):
+    from finders.ai import CappedBrain, RuleBrain
+
+    path = str(tmp_path / "count.db")
+    brain = CappedBrain(RuleBrain(), RuleBrain(), 2, counter_db=path)
+    assert brain._ok() and brain._ok() and not brain._ok()
+    again = CappedBrain(RuleBrain(), RuleBrain(), 2, counter_db=path)  # a new process, same database file
+    assert not again._ok(peek=True) and not again._ok()

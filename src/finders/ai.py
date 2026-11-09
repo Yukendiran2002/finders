@@ -253,14 +253,34 @@ class CappedBrain:
 
     name = "Gemini (daily limit)"
 
-    def __init__(self, model: Brain, fallback: Brain, daily_limit: int) -> None:
+    def __init__(self, model: Brain, fallback: Brain, daily_limit: int, counter_db: str | None = None) -> None:
+        """counter_db: an SQLite file that keeps the day's count, so a restart does not reset the budget."""
         self.model, self.fallback, self.limit = model, fallback, daily_limit
+        self.counter_db = counter_db
         self._day, self._used = "", 0
 
     def _ok(self, peek: bool = False) -> bool:
+        import sqlite3
         import time as _t
 
         day = _t.strftime("%Y-%m-%d", _t.gmtime())
+        if self.counter_db is not None:
+            conn = sqlite3.connect(self.counter_db, timeout=10)
+            try:
+                with conn:
+                    conn.execute("CREATE TABLE IF NOT EXISTS ai_usage (day TEXT PRIMARY KEY, calls INTEGER NOT NULL)")
+                    row = conn.execute("SELECT calls FROM ai_usage WHERE day=?", (day,)).fetchone()
+                    if (row[0] if row else 0) >= self.limit:
+                        return False
+                    if not peek:
+                        conn.execute(
+                            "INSERT INTO ai_usage(day, calls) VALUES (?, 1) "
+                            "ON CONFLICT(day) DO UPDATE SET calls=calls+1",
+                            (day,),
+                        )
+                return True
+            finally:
+                conn.close()
         if day != self._day:
             self._day, self._used = day, 0
         if self._used >= self.limit:
