@@ -26,6 +26,8 @@ SHOTS = {
     "next to a coffee cup.",
     "backpack_found": "A navy blue school backpack with a green dinosaur patch, left on a park bench.",
     "umbrella_found": "A folded black umbrella with a wooden hooked handle leaning against a bus stop pole after rain.",
+    "wallet_other": "A different, plain dark-brown leather wallet with a metal clip and no thread or decoration, lying "
+    "on a kitchen counter.",
     "teddy_found": "A small light-brown teddy bear with a red bow, slightly dusty, sitting on an airport waiting-area chair.",
 }
 EDITS = {  # owner's "old photo" of the same item, made from the found photo so it is recognisably the same object

@@ -8,6 +8,10 @@ matches the photo to Dev's report. It asks the conductor something only the pers
 and asks Dev something only the owner would know. Dev gets his wallet back and gives the conductor a six-digit code.
 The code releases the $40 to the conductor's PayPal.
 
+![The journey on two phones: match, finder question, both sides checked, handover code, payout](docs/phone-journey.jpg)
+
+**Demo video:** _(YouTube link added at submission)_
+
 > PayPal **sandbox** only: no real money moves. Sample reports on the board are marked "sample". The demo item
 > photos in `demo/photos/` were generated with Gemini's image model.
 
@@ -30,6 +34,8 @@ The code releases the $40 to the conductor's PayPal.
 Why the reward is captured up front rather than authorized: a lost item can take longer to turn up than an
 authorization's 3-day honour period ([PayPal docs](https://developer.paypal.com/payment-methods/auth-honor/)).
 Refunds cover every outcome where the finder is not paid.
+
+![Operator console: AG Grid cases and matches, live feed, PayPal audit, Gemini answer](docs/operator-console.jpg)
 
 ## Safety rules
 
