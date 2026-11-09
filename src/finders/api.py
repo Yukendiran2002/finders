@@ -268,6 +268,7 @@ def create_app(
         if records is None or not gemini_key:
             raise HTTPException(503, "questions need the PayPal Agent Toolkit reader and a Gemini key")
         try:
+            await service.refresh_payouts(cid)
             return await ask_about_case(service.db, records, service.paypal, cid, body.question, api_key=gemini_key)
         except Exception as exc:  # noqa: BLE001 - read-only; shown to the owner
             raise HTTPException(502, f"could not answer: {type(exc).__name__}") from None
@@ -316,6 +317,7 @@ def create_app(
         if records is None:
             raise HTTPException(503, "PayPal Agent Toolkit reader not configured")
         try:
+            await service.refresh_payouts(case_id)
             return await audit_case(service.db, records, service.paypal, case_id)
         except (KeyError, RuntimeError) as exc:
             raise fail(exc) from None
@@ -327,6 +329,7 @@ def create_app(
         if records is None or not gemini_key:
             raise HTTPException(503, "questions need the PayPal Agent Toolkit reader and a Gemini key")
         try:
+            await service.refresh_payouts(case_id)
             return await ask_about_case(service.db, records, service.paypal, case_id, body.question, api_key=gemini_key)
         except Exception as exc:  # noqa: BLE001
             raise HTTPException(502, f"could not answer: {type(exc).__name__}") from None
